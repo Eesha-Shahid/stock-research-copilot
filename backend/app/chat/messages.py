@@ -7,8 +7,16 @@ from typing import Any
 
 from fastapi import HTTPException, status
 
+from app.assistant.deps import TurnRegistry
+from app.assistant.outputs import GroundedAnswer
 from app.database.models.message_role import MessageRole
-from app.schemas.chat import MessagePart, TextPart, UIMessage
+from app.schemas.chat import (
+    CitationPart,
+    CitationPayload,
+    MessagePart,
+    TextPart,
+    UIMessage,
+)
 
 DEFAULT_THREAD_TITLE = "New chat"
 MAX_TITLE_LENGTH = 255
@@ -50,12 +58,16 @@ def _parse_part(raw: dict[str, Any]) -> MessagePart:
     part_type = raw.get("type")
     if part_type == "text":
         return TextPart.model_validate(raw)
+    if part_type == "data-citation":
+        return CitationPart.model_validate(raw)
     raise ValueError(f"Unsupported message part type: {part_type!r}")
 
 
 def row_to_ui_message(row: dict[str, Any]) -> UIMessage:
     raw_parts = row.get("parts") or []
-    parts: list[MessagePart] = [_parse_part(part) for part in raw_parts]
+    parts: list[MessagePart] = []
+    for part in raw_parts:
+        parts.append(_parse_part(part))
     if not parts and row.get("content"):
         parts = [TextPart(text=row["content"])]
 
@@ -66,15 +78,44 @@ def row_to_ui_message(row: dict[str, Any]) -> UIMessage:
     )
 
 
+def citation_parts_from_grounded_answer(
+    answer: GroundedAnswer,
+    registry: TurnRegistry,
+) -> list[CitationPart]:
+    parts: list[CitationPart] = []
+    for citation in answer.citations:
+        passage = registry.passages_by_chunk_id[citation.chunk_id]
+        parts.append(
+            CitationPart(
+                id=str(citation.chunk_id),
+                data=CitationPayload(
+                    citation_index=citation.citation_index,
+                    chunk_id=citation.chunk_id,
+                    excerpt=citation.excerpt,
+                    ticker=passage.ticker,
+                    company_name=passage.company_name,
+                    form=passage.form,
+                    filing_date=passage.filing_date,
+                    page=passage.page,
+                    section=passage.section,
+                ),
+            )
+        )
+    return parts
+
+
 def build_assistant_message(
-    text: str,
+    answer: GroundedAnswer,
+    registry: TurnRegistry,
     *,
     message_id: uuid.UUID | None = None,
 ) -> UIMessage:
+    parts: list[MessagePart] = [TextPart(text=answer.answer)]
+    parts.extend(citation_parts_from_grounded_answer(answer, registry))
     return UIMessage(
         id=str(message_id or uuid.uuid4()),
         role="assistant",
-        parts=[TextPart(text=text)],
+        parts=parts,
     )
 
 

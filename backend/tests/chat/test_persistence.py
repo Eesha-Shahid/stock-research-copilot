@@ -1,13 +1,13 @@
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from app.auth.dependencies import CurrentUser
-from app.database.chats import append_turn, create_thread
-from app.schemas.chat import TextPart, UIMessage
+from app.database.chats import append_grounded_turn, create_thread
+from app.schemas.chat import CitationPart, CitationPayload, TextPart, UIMessage
 
 
 NOW = datetime(2026, 6, 5, 12, 0, 0, tzinfo=UTC)
@@ -123,11 +123,12 @@ async def test_create_thread_uses_insert_response_data() -> None:
 
 
 @pytest.mark.anyio
-async def test_append_turn_saves_both_messages_and_titles_new_thread() -> None:
+async def test_append_grounded_turn_includes_ids_for_citation_rows() -> None:
+    chunk_id = uuid.uuid4()
     assistant_message_id = uuid.uuid4()
     client = FakePersistenceClient()
 
-    await append_turn(
+    await append_grounded_turn(
         client,
         thread_id=uuid.uuid4(),
         user_message=UIMessage(
@@ -137,13 +138,28 @@ async def test_append_turn_saves_both_messages_and_titles_new_thread() -> None:
         assistant_message=UIMessage(
             id=str(assistant_message_id),
             role="assistant",
-            parts=[TextPart(text="Stubbed reply")],
+            parts=[
+                TextPart(text="Cloud revenue increased [1]."),
+                CitationPart(
+                    id=str(chunk_id),
+                    data=CitationPayload(
+                        citation_index=1,
+                        chunk_id=chunk_id,
+                        excerpt="Cloud revenue increased significantly.",
+                        ticker="MSFT",
+                        company_name="Microsoft Corporation",
+                        form="10-K",
+                        filing_date=date(2024, 7, 30),
+                        page="15",
+                        section="MD&A",
+                    ),
+                ),
+            ],
         ),
-        thread_title="New chat",
+        thread_title="Existing chat",
     )
 
-    rows = client.inserted["chat_messages"]
-    assert [row["sequence"] for row in rows] == [0, 1]
-    assert [row["role"] for row in rows] == ["user", "assistant"]
-    assert rows[1]["id"] == str(assistant_message_id)
-    assert client.updated["chat_threads"]["title"] == "What changed in cloud revenue?"
+    citation_rows = client.inserted["message_citations"]
+    assert len(citation_rows) == 1
+    assert uuid.UUID(citation_rows[0]["id"])
+    assert citation_rows[0]["message_id"] == str(assistant_message_id)

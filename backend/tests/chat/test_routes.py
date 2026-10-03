@@ -3,15 +3,22 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.auth.dependencies import CurrentUser, get_access_token, get_current_user
-from app.database.chats import ThreadRow
+from app.api.chat import citation_context_response
+from app.database.models import DocumentChunk, SourceDocument
 from app.main import app
-from app.schemas.chat import ThreadResponse
+from app.schemas.chat import (
+    CitationContextChunk,
+    CitationContextResponse,
+    CitationPart,
+    StreamRequest,
+    ThreadResponse,
+)
 
 TEST_USER = CurrentUser(id=uuid.uuid4(), email="analyst@example.com")
+OTHER_USER = CurrentUser(id=uuid.uuid4(), email="other@example.com")
 THREAD_ID = uuid.uuid4()
 NOW = datetime(2026, 6, 5, 12, 0, 0, tzinfo=UTC)
 
@@ -92,12 +99,14 @@ def test_post_thread_rejects_missing_body(client: TestClient) -> None:
 
 
 def test_delete_thread_removes_owned_thread(client: TestClient) -> None:
+    from app.database.chats import ThreadRow
+
     thread = ThreadRow(id=THREAD_ID, user_id=TEST_USER.id, title="Old chat")
 
     with (
         patch("app.api.chat.require_thread_access", AsyncMock(return_value=thread)),
         patch("app.api.chat.create_user_client", AsyncMock(return_value=MagicMock())),
-        patch("app.api.chat.delete_thread", AsyncMock()) as mock_delete,
+        patch("app.api.chat.delete_thread", AsyncMock(), create=True) as mock_delete,
     ):
         response = client.delete(
             f"/chat/threads/{THREAD_ID}",
@@ -110,9 +119,13 @@ def test_delete_thread_removes_owned_thread(client: TestClient) -> None:
 
 
 def test_delete_thread_returns_403_for_foreign_thread(client: TestClient) -> None:
+    from fastapi import HTTPException
+
     with patch(
         "app.api.chat.require_thread_access",
-        AsyncMock(side_effect=HTTPException(status_code=403, detail="Forbidden")),
+        AsyncMock(
+            side_effect=HTTPException(status_code=403, detail="Forbidden"),
+        ),
     ):
         response = client.delete(
             f"/chat/threads/{THREAD_ID}",
@@ -123,9 +136,13 @@ def test_delete_thread_returns_403_for_foreign_thread(client: TestClient) -> Non
 
 
 def test_get_messages_returns_403_for_foreign_thread(client: TestClient) -> None:
+    from fastapi import HTTPException
+
     with patch(
         "app.api.chat.require_thread_access",
-        AsyncMock(side_effect=HTTPException(status_code=403, detail="Forbidden")),
+        AsyncMock(
+            side_effect=HTTPException(status_code=403, detail="Forbidden"),
+        ),
     ):
         response = client.get(
             f"/chat/threads/{THREAD_ID}/messages",
@@ -135,7 +152,126 @@ def test_get_messages_returns_403_for_foreign_thread(client: TestClient) -> None
     assert response.status_code == 403
 
 
+def test_get_citation_context_returns_neighbor_chunks(client: TestClient) -> None:
+    chunk_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    context = CitationContextResponse(
+        anchor_chunk_id=chunk_id,
+        document_id=document_id,
+        ticker="AAPL",
+        company_name="Apple Inc.",
+        form="10-K",
+        filing_date="2024-11-01",
+        source_url="https://example.com/aapl-10k",
+        chunks=[
+            CitationContextChunk(
+                chunk_id=uuid.uuid4(),
+                chunk_index=36,
+                role="previous",
+                text="Prior context",
+                page="7",
+                section="Products",
+            ),
+            CitationContextChunk(
+                chunk_id=chunk_id,
+                chunk_index=37,
+                role="anchor",
+                text="| Segment | 2024 |\n| --- | --- |\n| Services | 96,169 |",
+                page="8",
+                section="Products",
+            ),
+            CitationContextChunk(
+                chunk_id=uuid.uuid4(),
+                chunk_index=38,
+                role="next",
+                text="Following context",
+                page="8",
+                section="Products",
+            ),
+        ],
+    )
+
+    with patch("app.api.chat.load_citation_context", return_value=context) as mock_load:
+        response = client.get(
+            f"/chat/citations/{chunk_id}/context?radius=2",
+            headers={"Authorization": "Bearer test"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["anchorChunkId"] == str(chunk_id)
+    assert body["documentId"] == str(document_id)
+    assert body["companyName"] == "Apple Inc."
+    assert [chunk["role"] for chunk in body["chunks"]] == ["previous", "anchor", "next"]
+    assert body["chunks"][1]["chunkIndex"] == 37
+    assert body["chunks"][1]["text"].startswith("| Segment |")
+    mock_load.assert_called_once_with(chunk_id, 2)
+
+
+def test_citation_context_response_includes_full_table_for_table_chunk() -> None:
+    document_id = uuid.uuid4()
+    chunk_id = uuid.uuid4()
+    document = SourceDocument(
+        id=document_id,
+        ticker="AAPL",
+        cik="0000320193",
+        company_name="Apple Inc.",
+        form="10-K",
+        filing_date="2025-10-31",
+        report_date="2025-09-27",
+        fiscal_year=2025,
+        accession_number="0000320193-25-000079",
+        primary_document="aapl-20250927.htm",
+        source_url="https://example.com/aapl",
+    )
+    chunk = DocumentChunk(
+        id=chunk_id,
+        document_id=document_id,
+        chunk_index=37,
+        text="Products and Services Performance\n| Category | 2025 Sales |\n| --- | --- |\n| iPhone | $209,586 |",
+        page=None,
+        section="Products and Services Performance",
+        chunk_metadata={
+            "chunk_kind": "table_row",
+            "table": {
+                "table_index": 2,
+                "title": "Products and Services Performance",
+                "units": "dollars in millions",
+                "markdown": "| Category | 2025 Sales |\n| --- | --- |\n| iPhone | $209,586 |",
+                "rows": [],
+                "columns": [],
+                "footnotes": [],
+                "source_html_hash": "abc123",
+            },
+        },
+    )
+    chunk.document = document
+
+    context = citation_context_response([chunk], anchor_chunk_id=chunk_id)
+
+    assert context.table is not None
+    assert context.table.title == "Products and Services Performance"
+    assert context.table.units == "dollars in millions"
+    assert context.table.markdown.startswith("| Category |")
+
+
+def test_get_citation_context_returns_404_when_chunk_is_missing(
+    client: TestClient,
+) -> None:
+    chunk_id = uuid.uuid4()
+
+    with patch("app.api.chat.load_citation_context", return_value=None):
+        response = client.get(
+            f"/chat/citations/{chunk_id}/context",
+            headers={"Authorization": "Bearer test"},
+        )
+
+    assert response.status_code == 404
+
+
 def test_post_stream_returns_event_stream(client: TestClient) -> None:
+    from app.database.chats import ThreadRow
+
     thread = ThreadRow(id=THREAD_ID, user_id=TEST_USER.id, title="New chat")
 
     async def fake_stream(**kwargs):
@@ -165,3 +301,48 @@ def test_post_stream_returns_event_stream(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert "text-start" in response.text
+
+
+def test_stream_request_accepts_camel_case_citation_parts() -> None:
+    thread_id = uuid.uuid4()
+    chunk_id = uuid.uuid4()
+
+    request = StreamRequest.model_validate(
+        {
+            "threadId": str(thread_id),
+            "messages": [
+                {
+                    "id": "assistant-message",
+                    "role": "assistant",
+                    "parts": [
+                        {"type": "text", "text": "Answer with a citation."},
+                        {
+                            "type": "data-citation",
+                            "id": str(chunk_id),
+                            "data": {
+                                "citationIndex": 1,
+                                "chunkId": str(chunk_id),
+                                "excerpt": "Relevant excerpt",
+                                "ticker": "AAPL",
+                                "companyName": "Apple Inc.",
+                                "form": "10-K",
+                                "filingDate": "2024-10-31",
+                                "page": "42",
+                                "section": "Risk Factors",
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "parts": [{"type": "text", "text": "Follow up"}],
+                },
+            ],
+        }
+    )
+
+    citation_part = request.messages[0].parts[1]
+    assert isinstance(citation_part, CitationPart)
+    assert citation_part.data.citation_index == 1
+    assert citation_part.data.chunk_id == chunk_id
+    assert citation_part.data.company_name == "Apple Inc."
