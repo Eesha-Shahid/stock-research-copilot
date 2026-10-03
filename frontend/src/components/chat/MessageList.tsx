@@ -1,22 +1,37 @@
 import type { ChatStatus, UIMessage } from 'ai'
 
 import { MessageBubble } from '@/components/chat/MessageBubble'
+import { PipelineStatus } from '@/components/chat/PipelineStatus'
 import {
   ChatContainerContent,
   ChatContainerRoot,
 } from '@/components/ui/chat-container'
 import { PromptSuggestion } from '@/components/ui/prompt-suggestions'
 import { ScrollButton } from '@/components/ui/scroll-button'
-import { textFromMessage } from '@/lib/chat'
+import {
+  textFromMessage,
+  type CitationPayload,
+  type PipelineStatus as PipelineStatusState,
+} from '@/lib/citations'
 import { EXAMPLE_QUESTIONS } from '@/lib/suggestions'
 
 type MessageListProps = {
   messages: UIMessage[]
   status: ChatStatus
+  pipelineStatus: PipelineStatusState | null
+  selectedCitationIndex: number | null
+  onSelectCitation: (citation: CitationPayload) => void
   onSendSuggestion: (text: string) => void
 }
 
-export function MessageList({ messages, status, onSendSuggestion }: MessageListProps) {
+export function MessageList({
+  messages,
+  status,
+  pipelineStatus,
+  selectedCitationIndex,
+  onSelectCitation,
+  onSendSuggestion,
+}: MessageListProps) {
   const isBusy = status === 'submitted' || status === 'streaming'
   const lastMessage = messages[messages.length - 1]
   const lastIsStreamingAssistant =
@@ -24,8 +39,8 @@ export function MessageList({ messages, status, onSendSuggestion }: MessageListP
     lastMessage?.role === 'assistant' &&
     textFromMessage(lastMessage).length > 0
 
-  // Show a waiting indicator until the first answer text arrives.
-  const showThinking = isBusy && !lastIsStreamingAssistant
+  // Show the pipeline block while the model is working but before answer text arrives.
+  const showPipeline = isBusy && !lastIsStreamingAssistant
 
   return (
     <ChatContainerRoot className="relative flex-1">
@@ -37,7 +52,7 @@ export function MessageList({ messages, status, onSendSuggestion }: MessageListP
                 Ask about SEC filings
               </h2>
               <p className="text-sm text-muted-foreground">
-                Start with one of these questions or write your own.
+                Every answer is grounded in source documents with citations.
               </p>
             </div>
             <div className="flex flex-wrap justify-center gap-2">
@@ -59,14 +74,17 @@ export function MessageList({ messages, status, onSendSuggestion }: MessageListP
           <MessageBubble
             key={message.id}
             message={message}
+            selectedCitationIndex={selectedCitationIndex}
+            onSelectCitation={onSelectCitation}
             isStreaming={message === lastMessage && lastIsStreamingAssistant}
           />
         ))}
 
-        {showThinking ? (
-          <p aria-live="polite" className="animate-pulse text-sm text-muted-foreground">
-            Thinking…
-          </p>
+        {showPipeline ? (
+          <PipelineStatus
+            isSubmitted={status === 'submitted'}
+            pipelineStatus={pipelineStatus}
+          />
         ) : null}
       </ChatContainerContent>
 

@@ -1,25 +1,33 @@
 import type { UIMessage } from 'ai'
 
-import { textFromMessage } from '@/lib/chat'
+import { AssistantMessage } from '@/components/chat/AssistantMessage'
+import { textFromMessage, type CitationPayload } from '@/lib/citations'
 
 type MessageBubbleProps = {
   message: UIMessage
+  selectedCitationIndex: number | null
+  onSelectCitation: (citation: CitationPayload) => void
   isStreaming?: boolean
 }
 
-export function MessageBubble({ message, isStreaming = false }: MessageBubbleProps) {
-  const text = textFromMessage(message)
-
+export function MessageBubble({
+  message,
+  selectedCitationIndex,
+  onSelectCitation,
+  isStreaming,
+}: MessageBubbleProps) {
   if (message.role === 'assistant') {
     return (
-      <div className="min-w-0 text-sm leading-relaxed whitespace-pre-wrap text-foreground">
-        {text}
-        {isStreaming ? (
-          <span className="ml-0.5 inline-block h-4 w-2 translate-y-0.5 animate-pulse rounded-sm bg-foreground" />
-        ) : null}
-      </div>
+      <AssistantMessage
+        message={message}
+        selectedCitationIndex={selectedCitationIndex}
+        onSelectCitation={onSelectCitation}
+        isStreaming={isStreaming}
+      />
     )
   }
+
+  const text = textFromMessage(message)
 
   return (
     <div className="flex justify-end">

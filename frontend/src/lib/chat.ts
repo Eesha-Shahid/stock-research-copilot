@@ -19,6 +19,35 @@ type MessageHistoryResponse = {
   messages: UIMessage[]
 }
 
+export type CitationContextChunk = {
+  chunkId: string
+  chunkIndex: number
+  role: 'previous' | 'anchor' | 'next'
+  text: string
+  page?: string
+  section?: string
+}
+
+export type CitationContextTable = {
+  tableIndex: number
+  title?: string
+  units?: string
+  markdown: string
+  tableData: Record<string, unknown>
+}
+
+export type CitationContext = {
+  anchorChunkId: string
+  documentId: string
+  ticker: string
+  companyName?: string
+  form: string
+  filingDate: string
+  sourceUrl: string
+  chunks: CitationContextChunk[]
+  table?: CitationContextTable
+}
+
 export async function listThreads(): Promise<ThreadSummary[]> {
   const response = await api.get<ThreadListResponse>('/chat/threads')
   return response.threads
@@ -39,9 +68,12 @@ export async function getThreadMessages(threadId: string): Promise<UIMessage[]> 
   return response.messages
 }
 
-export function textFromMessage(message: UIMessage): string {
-  return message.parts
-    .filter((part) => part.type === 'text')
-    .map((part) => part.text)
-    .join('')
+export async function getCitationContext(
+  chunkId: string,
+  radius = 1,
+): Promise<CitationContext> {
+  const params = new URLSearchParams({ radius: String(radius) })
+  return api.get<CitationContext>(
+    `/chat/citations/${encodeURIComponent(chunkId)}/context?${params.toString()}`,
+  )
 }
