@@ -21,9 +21,12 @@ from app.chat.streaming import (
 from app.grounding.validator import GroundingValidator, prune_unreferenced_citations
 from app.retrieval.retriever import DocumentRetriever
 from app.schemas.chat import UIMessage
+import logging
+from pydantic_ai.exceptions import ModelHTTPError
 
 MAX_VALIDATION_ATTEMPTS = 2
 
+logger = logging.getLogger(__name__)
 
 async def _yield_status_updates(
     status_queue: asyncio.Queue[tuple[str, str]],
@@ -87,8 +90,22 @@ async def run_turn(
 
         try:
             grounded = await agent_task
-        except Exception as exc:
-            async for event in stream_error(f"Assistant run failed: {exc}"):
+        except ModelHTTPError as exc:
+            # Expected provider failures (bad key, rate limit, outage): one line is enough.
+            logger.error(
+                "Model request failed for thread %s: status=%s model=%s body=%s",
+                thread_id,
+                exc.status_code,
+                exc.model_name,
+                exc.body,
+            )
+            async for event in stream_error("Assistant run failed. Please try again."):
+                yield event
+            return
+        except Exception:
+            # Anything else is a bug: keep the full traceback.
+            logger.exception("Agent run failed for thread %s (attempt %s)", thread_id, attempt)
+            async for event in stream_error("Assistant run failed. Please try again."):
                 yield event
             return
 
