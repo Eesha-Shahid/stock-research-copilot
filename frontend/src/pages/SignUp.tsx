@@ -59,7 +59,7 @@ export function SignUp() {
   return (
     <AuthLayout
       title="Create account"
-      description="Sign up with your work email to use Document Copilot."
+      description="Sign up with your work email to use Stock Research Copilot."
     >
       <form className="space-y-4" onSubmit={handleSubmit}>
         <div className="space-y-2">

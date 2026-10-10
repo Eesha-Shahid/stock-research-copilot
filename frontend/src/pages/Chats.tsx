@@ -70,7 +70,7 @@ export function Chats() {
           <div className="flex items-center gap-3">
             <LogoMark className='size-10`' />
             <div>
-              <p className="text-sm font-semibold">Document Copilot</p>
+              <p className="text-sm font-semibold">Stock Research Copilot</p>
               <p className="text-xs text-muted-foreground">Research workspace</p>
             </div>
           </div>
