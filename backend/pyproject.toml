@@ -10,7 +10,6 @@ dependencies = [
     "alembic==1.20.0",
     "fastapi==0.141.1",
     "httpx==0.28.1",
-    "nest-asyncio==1.6.0",
     "openai==3.16.2",
     "pgvector==0.5.0",
     "psycopg[binary]==3.3.6",
@@ -37,3 +36,6 @@ dev = [
     "pytest==9.1.1",
     "ruff==0.16.8",
 ]
+
+[tool.vercel]
+entrypoint = "app.main:app"

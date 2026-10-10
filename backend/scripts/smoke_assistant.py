@@ -6,7 +6,7 @@ import asyncio
 import sys
 import uuid
 
-import nest_asyncio
+# import nest_asyncio
 
 from app.assistant.agent import run_document_agent
 from app.assistant.deps import DocumentAgentDeps, TurnRegistry
@@ -21,7 +21,7 @@ from app.config import settings
 from app.grounding.validator import GroundingValidator, prune_unreferenced_citations
 from app.retrieval.retriever import DocumentRetriever
 
-nest_asyncio.apply()
+# nest_asyncio.apply()
 
 QUERIES = {
     "apple-mix": "Across Apple's 2021–2025 10-Ks, how did the revenue mix between iPhone, Services, Mac, iPad, and Wearables change?",
