@@ -39,3 +39,6 @@ dev = [
 
 [tool.vercel]
 entrypoint = "app.main:app"
+
+[tool.pytest.ini_options]
+markers = ["integration: tests that need a real database and OpenAI key"]
